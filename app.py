@@ -324,6 +324,18 @@ with tabs[3]:
         if st.button(tr.get("generate_full_survey_button", "Generate Full Survey")):
             params = st.session_state.config_params
             standards_instructions = "\n".join([f"- {standard}: {STANDARDS[standard]}" for standard in params["standards"]])
+            # Déterminer les exigences à inclure dans l’intro
+            if params["standards"]:
+                intro_standards_text = "\n".join([f"- {standard}: {STANDARDS[standard]}" for standard in params["standards"]])
+            else:
+                intro_standards_text = f"- ISO 20252: {STANDARDS['ISO 20252']}"
+            
+            # Construire l’intro de l’exemple avec des retours à la ligne
+            if params['survey_lang'] == 'Français':
+                example_intro = f"Merci de participer à cette enquête. Cette enquête respecte les exigences suivantes:\n- ISO 20252: Assurer clarté, transparence et cohérence dans la conception des questions."
+            else:
+                example_intro = f"Thank you for participating in this survey. This survey adheres to the following requirements:\n- ISO 20252: Ensure clarity, transparency, and consistency in question design."
+
             prompt = f"""
             Create a complete, professional survey from this outline:
             {st.session_state.questions_raw}
@@ -339,6 +351,8 @@ with tabs[3]:
             Additional instructions: {params['custom_instructions'] if params['custom_instructions'] else 'None'}.
             Standards to follow:
             {standards_instructions}
+            Include in the 'intro' the following requirements based on the selected standards (or ISO 20252 by default):
+            {intro_standards_text}
             Output as a JSON object with 'intro', 'questions', and 'outro', entirely in {params['survey_lang']}.
             For each question: include 'type', 'text', 'options' (set to null for open-ended questions), and 'condition' (e.g., "If Q2 = Yes" for question 2).
             Multiple-choice: 4+ relevant options. Single-choice: scale (e.g., 1-5, Yes/No).
@@ -346,12 +360,12 @@ with tabs[3]:
             Example in {params['survey_lang']}:
             ```json
             {{
-                "intro": {"Merci de participer..." if params['survey_lang'] == 'French' else "Thank you for participating..."},
+                "intro": "{example_intro}",
                 "questions": [
-                    {{"type": {"Choix unique" if params['survey_lang'] == 'French' else "Single-choice"}, "text": {"Recommanderiez-vous notre service ?" if params['survey_lang'] == 'French' else "Would you recommend our service?"}, "options": ["Oui", "Non"], "condition": null}},
-                    {{"type": {"Ouvertes" if params['survey_lang'] == 'French' else "Open-ended"}, "text": {"Si oui, pourquoi ?" if params['survey_lang'] == 'French' else "If yes, why?"}, "options": null, "condition": "If Q1 = Oui"}}
+                    {{"type": "{ 'Choix unique' if params['survey_lang'] == 'Français' else 'Single-choice' }", "text": "{ 'Recommanderiez-vous notre service ?' if params['survey_lang'] == 'Français' else 'Would you recommend our service?' }", "options": ["Oui", "Non"], "condition": null}},
+                    {{"type": "{ 'Ouvertes' if params['survey_lang'] == 'Français' else 'Open-ended' }", "text": "{ 'Si oui, pourquoi ?' if params['survey_lang'] == 'Français' else 'If yes, why?' }", "options": null, "condition": "If Q1 = Oui"}}
                 ],
-                "outro": {"Merci !" if params['survey_lang'] == 'French' else "Thank you!"}
+                "outro": "{ 'Merci !' if params['survey_lang'] == 'Français' else 'Thank you!' }"
             }}
             """
             with st.spinner(tr.get("generating", "Generating in progress...")):
