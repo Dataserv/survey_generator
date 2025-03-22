@@ -49,7 +49,6 @@ lang_code = LANGUAGES[interface_lang]
 tr = translation_files.get(lang_code, {})
 st.title(tr.get("survey_generator", "Survey Generator"))
 
-
 # Choix du service AI
 ai_service = st.sidebar.selectbox(
     "AI Service",
@@ -63,7 +62,6 @@ if ai_service == "OpenAI (ChatGPT)":
     if not openai_api_key:
         st.warning("Please enter your OpenAI API key.")
     client_openai = OpenAI(api_key=openai_api_key) if openai_api_key else None
-
 elif ai_service == "Claude (Anthropic)":
     claude_api_key = st.sidebar.text_input("Claude API Key", type="password")
     if not claude_api_key:
@@ -91,6 +89,75 @@ def call_ai_service(prompt, service):
     else:
         return "Error: Service not configured properly."
 
+# Fonction de vérification de cohérence (déplacée au niveau global)
+def check_consistency(survey):
+    issues = []
+    if not survey.get("questions") or not isinstance(survey["questions"], (list, tuple)):
+        issues.append(tr.get("no_questions", "No valid questions found in survey"))
+        return issues
+
+    for i, q in enumerate(survey["questions"]):
+        q_num = f"Q{i+1}"
+        
+        # Vérification des champs obligatoires
+        if not q.get("text") or not q.get("type"):
+            issues.append(f"{q_num}: {tr.get('missing_field', 'Missing required field (text or type)')} - {q}")
+            continue
+
+        # Vérification des options selon le type
+        q_type = q.get("type", "").lower()
+        options = q.get("options")
+        if "choice" in q_type and (options is None or not isinstance(options, (list, tuple)) or not options):
+            issues.append(f"{q_num}: {tr.get('missing_options', 'Choice question requires options')} - {q}")
+            continue
+        if "open" in q_type and options is not None:
+            issues.append(f"{q_num}: {tr.get('unexpected_options', 'Open-ended question should not have options')} - {q}")
+            continue
+
+        # Vérification des conditions
+        condition = q.get("condition")
+        if condition:
+            try:
+                if isinstance(condition, str):
+                    cond_parts = condition.split(" = ")
+                    if len(cond_parts) != 2:
+                        issues.append(f"{q_num}: {tr.get('invalid_condition_format', 'Invalid condition format')} ({condition})")
+                        continue
+                    cond_q, cond_val = cond_parts
+                elif isinstance(condition, dict):
+                    cond_q = condition.get("question", "")
+                    cond_val = condition.get("value", "")
+                    if not cond_q or not cond_val:
+                        issues.append(f"{q_num}: {tr.get('invalid_condition_dict', 'Invalid condition dictionary')} ({condition})")
+                        continue
+                else:
+                    issues.append(f"{q_num}: {tr.get('unsupported_condition_type', 'Unsupported condition type')} ({condition})")
+                    continue
+
+                cond_q_clean = cond_q.replace("If Q", "").strip()
+                try:
+                    cond_idx = int(cond_q_clean) - 1
+                except ValueError:
+                    issues.append(f"{q_num}: {tr.get('invalid_question_ref', 'Invalid question reference')} ({cond_q})")
+                    continue
+
+                if cond_idx < 0 or cond_idx >= len(survey["questions"]):
+                    issues.append(f"{q_num}: {tr.get('out_of_bounds', 'Condition references out-of-bounds question')} ({cond_q})")
+                    continue
+
+                ref_q = survey["questions"][cond_idx]
+                ref_options = ref_q.get("options", []) or []
+                ref_option_values = [str(opt).strip().lower() if isinstance(opt, (int, str)) else str(opt.get("value", opt)).strip().lower() for opt in ref_options]
+                cond_val_cleaned = str(cond_val).strip("'\"").lower()
+
+                if not ref_option_values:
+                    issues.append(f"{q_num}: {tr.get('no_options_ref', 'Referenced question has no options')} (Q{cond_idx+1})")
+                elif cond_val_cleaned not in ref_option_values:
+                    issues.append(f"{q_num}: {tr.get('invalid_condition_value', 'Invalid condition value')} ({condition}) - '{cond_val}' not in Q{cond_idx+1} options: {ref_option_values}")
+            except Exception as e:
+                issues.append(f"{q_num}: {tr.get('condition_error', 'Error processing condition')} ({condition}) - {str(e)}")
+
+    return issues
 
 # Étapes avec onglets
 tabs = st.tabs([
@@ -100,25 +167,14 @@ tabs = st.tabs([
     tr.get("step4", "Step 4: Finalization")
 ])
 
-# Étape 1 : Configuration
+# Étape 1 : Configuration (inchangée)
 with tabs[0]:
     st.subheader(tr.get("survey_details", "Survey Details"))
-
-    # Section 1 : Informations générales
     st.markdown(f"### {tr.get('general_info', 'General Information')}")
-    entity_name = st.text_input(
-        tr.get("entity_label", "Entity Name (company, institution, etc.)"),
-        help="Ex: Acme Corp, Université de Paris"
-    )
+    entity_name = st.text_input(tr.get("entity_label", "Entity Name (company, institution, etc.)"), help="Ex: Acme Corp, Université de Paris")
     if not entity_name:
         st.warning(tr.get("warning_message", "Please fill in all fields."))
-    
-    survey_title = st.text_input(
-        tr.get("survey_title_label", "Survey Title"),
-        help="Ex: Enquête de satisfaction 2025"
-    )
-
-    # Section 2 : Objectifs et contexte
+    survey_title = st.text_input(tr.get("survey_title_label", "Survey Title"), help="Ex: Enquête de satisfaction 2025")
     st.markdown(f"### {tr.get('objectives_context', 'Objectives and Context')}")
     survey_types = {
         tr.get("client_satisfaction", "Client Satisfaction"): "Customer satisfaction survey (e.g., NPS, CSAT)",
@@ -132,7 +188,6 @@ with tabs[0]:
     survey_context = survey_types[survey_type]
     if survey_type == tr.get("custom", "Custom"):
         survey_context = st.text_input(tr.get("custom_survey_type", "Describe the custom survey type"), "")
-
     objectives_options = [
         tr.get("measure_satisfaction", "Measure Satisfaction"),
         tr.get("collect_opinions", "Collect Opinions"),
@@ -140,100 +195,33 @@ with tabs[0]:
         tr.get("collect_demographics", "Collect Demographics"),
         tr.get("other", "Other")
     ]
-    objectives = st.multiselect(
-        tr.get("objectives_label", "Survey Objectives"),
-        options=objectives_options,
-        default=[tr.get("measure_satisfaction", "Measure Satisfaction")]
-    )
+    objectives = st.multiselect(tr.get("objectives_label", "Survey Objectives"), options=objectives_options, default=[tr.get("measure_satisfaction", "Measure Satisfaction")])
     if tr.get("other", "Other") in objectives:
         custom_objective = st.text_input(tr.get("custom_objective", "Specify the custom objective"), "")
-
-    sectors = [
-        tr.get("technology", "Technology"),
-        tr.get("health", "Health"),
-        tr.get("education", "Education"),
-        tr.get("commerce", "Commerce"),
-        tr.get("services", "Services"),
-        tr.get("other", "Other")
-    ]
+    sectors = [tr.get("technology", "Technology"), tr.get("health", "Health"), tr.get("education", "Education"), tr.get("commerce", "Commerce"), tr.get("services", "Services"), tr.get("other", "Other")]
     sector = st.selectbox(tr.get("sector_label", "Sector of Activity"), sectors)
     if sector == tr.get("other", "Other"):
         sector = st.text_input(tr.get("custom_sector", "Specify the sector"), "")
-
-    # Section 3 : Public cible
     st.markdown(f"### {tr.get('target_audience', 'Target Audience')}")
-    target_groups_options = [
-        tr.get("individual", "Individuals"),
-        tr.get("business", "Businesses"),
-        tr.get("students", "Students"),
-        tr.get("employees", "Employees"),
-        tr.get("patients", "Patients"),
-        tr.get("other", "Other")
-    ]
-    target_groups = st.multiselect(
-        tr.get("target_groups_label", "Target Groups"),
-        options=target_groups_options,
-        default=[tr.get("individual", "Individuals")]
-    )
+    target_groups_options = [tr.get("individual", "Individuals"), tr.get("business", "Businesses"), tr.get("students", "Students"), tr.get("employees", "Employees"), tr.get("patients", "Patients"), tr.get("other", "Other")]
+    target_groups = st.multiselect(tr.get("target_groups_label", "Target Groups"), options=target_groups_options, default=[tr.get("individual", "Individuals")])
     if tr.get("other", "Other") in target_groups:
         custom_target = st.text_input(tr.get("custom_target", "Specify the target group"), "")
-
-    target_size = st.slider(
-        tr.get("target_size_label", "Target Sample Size"),
-        min_value=10, max_value=10000, value=100, step=10
-    )
-
-    # Section 4 : Structure du questionnaire
+    target_size = st.slider(tr.get("target_size_label", "Target Sample Size"), min_value=10, max_value=10000, value=100, step=10)
     st.markdown(f"### {tr.get('survey_structure', 'Survey Structure')}")
-    sections = st.number_input(
-        tr.get("sections_label", "Number of Sections"),
-        min_value=1, max_value=10, value=3
-    )
-    
-    question_types_options = [
-        tr.get("single_choice", "Single Choice"),
-        tr.get("multiple_choice", "Multiple Choice"),
-        tr.get("open_ended", "Open-ended"),
-        tr.get("scales", "Scales (1-5)"),
-        tr.get("conditional", "Conditional")
-    ]
-    question_types = st.multiselect(
-        tr.get("question_types_label", "Desired Question Types"),
-        options=question_types_options,
-        default=[tr.get("single_choice", "Single Choice"), tr.get("multiple_choice", "Multiple Choice"), tr.get("open_ended", "Open-ended")]
-    )
-    
+    sections = st.number_input(tr.get("sections_label", "Number of Sections"), min_value=1, max_value=10, value=3)
+    question_types_options = [tr.get("single_choice", "Single Choice"), tr.get("multiple_choice", "Multiple Choice"), tr.get("open_ended", "Open-ended"), tr.get("scales", "Scales (1-5)"), tr.get("conditional", "Conditional")]
+    question_types = st.multiselect(tr.get("question_types_label", "Desired Question Types"), options=question_types_options, default=[tr.get("single_choice", "Single Choice"), tr.get("multiple_choice", "Multiple Choice"), tr.get("open_ended", "Open-ended")])
     detail_level_options = [tr.get("basic", "Basic"), tr.get("detailed", "Detailed"), tr.get("very_detailed", "Very Detailed")]
-    detail_level = st.selectbox(
-        tr.get("detail_level_label", "Detail Level"),
-        detail_level_options
-    )
-    
-    duration = st.slider(
-        tr.get("duration_label", "Estimated Duration (minutes)"),
-        min_value=1, max_value=60, value=10
-    )
-
-    # Section 5 : Personnalisation
+    detail_level = st.selectbox(tr.get("detail_level_label", "Detail Level"), detail_level_options)
+    duration = st.slider(tr.get("duration_label", "Estimated Duration (minutes)"), min_value=1, max_value=60, value=10)
     st.markdown(f"### {tr.get('customization', 'Customization')}")
     survey_lang = st.selectbox(tr.get("survey_lang_label", "Survey Language"), list(LANGUAGES.keys()))
     tone_options = [tr.get("formal", "Formal"), tr.get("friendly", "Friendly"), tr.get("neutral", "Neutral")]
     tone = st.selectbox(tr.get("tone_label", "Survey Tone"), tone_options)
-    custom_instructions = st.text_area(
-        tr.get("custom_instructions_label", "Specific Instructions for Generation"),
-        placeholder=tr.get("custom_instructions_placeholder", "Ex: Add questions about customer loyalty.")
-    )
-
-    # Section 6 : Standards internationaux
+    custom_instructions = st.text_area(tr.get("custom_instructions_label", "Specific Instructions for Generation"), placeholder=tr.get("custom_instructions_placeholder", "Ex: Add questions about customer loyalty."))
     st.markdown(f"### {tr.get('standards_section', 'International Standards')}")
-    selected_standards = st.multiselect(
-        tr.get("standards_label", "Standards to Follow"),
-        options=list(STANDARDS.keys()),
-        default=["ISO 20252"],
-        help=tr.get("standards_help", "Select one or more standards to guide the design.")
-    )
-
-    # Sauvegarde des paramètres
+    selected_standards = st.multiselect(tr.get("standards_label", "Standards to Follow"), options=list(STANDARDS.keys()), default=["ISO 20252"], help=tr.get("standards_help", "Select one or more standards to guide the design."))
     if st.button(tr.get("save_config", "Save Configuration")):
         st.session_state.config_params = {
             "entity_name": entity_name,
@@ -255,7 +243,7 @@ with tabs[0]:
         }
         st.success(tr.get("success_message", "Configuration saved successfully!"))
 
-# Étape 2 : Génération des questions
+# Étape 2 : Génération des questions (inchangée)
 with tabs[1]:
     if not st.session_state.config_params:
         st.warning(tr.get("warning_message", "Please save the configuration in Step 1 before generating questions."))
@@ -269,11 +257,13 @@ with tabs[1]:
                 "Spanish": {"Opción única": "Opción única", "Opción múltiple": "Opción múltiple", "Abiertas": "Abiertas", "Escalas (1-5)": "Escalas (1-5)", "Condicionales": "Condicionales"},
                 "Arabic": {"اختيار واحد": "اختيار واحد", "اختيار متعدد": "اختيار متعدد", "مفتوحة": "مفتوحة", "مقاييس (1-5)": "مقاييس (1-5)", "مشروطة": "مشروطة"}
             }
-            translated_types = [question_types_translated[params['survey_lang']].get(t, t) for t in params['question_types']]
+            # Convertir la langue du sondage en code interne (ex. "Français" -> "French")
+            survey_lang_code = LANGUAGES[params['survey_lang']]
+            translated_types = [question_types_translated[survey_lang_code].get(t, t) for t in params['question_types']]
 
             example = (
                 "Section 1: Satisfaction\n- Comment êtes-vous satisfait ? (Ouvertes)\n- Recommanderiez-vous ? (Choix unique)\n- Si oui, pourquoi ? (Ouvertes, conditionnelle)"
-                if params['survey_lang'] == 'French'
+                if params['survey_lang'] == 'Français'
                 else "Section 1: Satisfaction\n- How satisfied are you? (Open-ended)\n- Would you recommend? (Single-choice)\n- If yes, why? (Open-ended, conditional)"
             )
 
@@ -315,17 +305,13 @@ with tabs[1]:
         if st.session_state.questions_raw:
             st.text_area(tr.get("questions_list", "Question List (editable)"), st.session_state.questions_raw, height=200)
 
-# Étape 3 : Édition des questions
+# Étape 3 : Édition des questions (inchangée)
 with tabs[2]:
     st.subheader(tr.get("edit_questions", "Edit Questions"))
     if not st.session_state.questions_raw:
         st.info(tr.get("info_generate_questions", "Generate questions in Step 2 first."))
     else:
-        questions_text = st.text_area(
-            tr.get("questions_list", "Question List (editable)"),
-            value=st.session_state.questions_raw,
-            height=300
-        )
+        questions_text = st.text_area(tr.get("questions_list", "Question List (editable)"), value=st.session_state.questions_raw, height=300)
         if st.button(tr.get("save_edits", "Save Edits")):
             st.session_state.questions_raw = questions_text
             st.success(tr.get("success_message", "Edits saved successfully!"))
@@ -370,7 +356,7 @@ with tabs[3]:
             """
             with st.spinner(tr.get("generating", "Generating in progress...")):
                 result = [None]
-                def run_generation(prompt=prompt):
+                def run_generation():
                     try:
                         result[0] = call_ai_service(prompt, params["ai_service"])
                     except Exception as e:
@@ -384,7 +370,11 @@ with tabs[3]:
                     st.error(result[0])
                 else:
                     try:
-                        survey_data = json.loads(result[0])
+                        json_match = re.search(r'```json\s*(.*?)\s*```', result[0], re.DOTALL)
+                        if json_match:
+                            survey_data = json.loads(json_match.group(1))
+                        else:
+                            survey_data = json.loads(result[0])  # Fallback si pas de balises
                         st.session_state.survey = survey_data
                         st.success(tr.get("success_message", "Survey generated successfully!"))
                     except json.JSONDecodeError as e:
@@ -392,170 +382,76 @@ with tabs[3]:
                     except Exception as e:
                         st.error(f"{tr.get('unexpected_error', 'Unexpected error')}: {str(e)}. Response: {result[0]}")
 
+        # Affichage et exportation
+        if st.session_state.survey.get("questions"):
+            issues = check_consistency(st.session_state.survey)
+            if issues:
+                st.warning(f"{tr.get('issues_detected', 'Issues detected')}:\n" + "\n".join(issues))
 
-            def check_consistency(survey):
-                issues = []
-                if not survey.get("questions") or not isinstance(survey["questions"], (list, tuple)):
-                    issues.append(tr.get("no_questions", "No valid questions found in survey"))
-                    return issues
-
-                for i, q in enumerate(survey["questions"]):
-                    q_num = f"Q{i+1}"
-                    
-                    # Vérification des champs obligatoires
-                    if not q.get("text") or not q.get("type"):
-                        issues.append(f"{q_num}: {tr.get('missing_field', 'Missing required field (text or type)')} - {q}")
-                        continue
-
-                    # Vérification des options selon le type
-                    q_type = q.get("type", "").lower()
+            st.subheader(tr.get("generated_survey", "Generated Survey"))
+            st.write(f"{tr.get('introduction', 'Introduction')}: {st.session_state.survey['intro']}")
+            for i, q in enumerate(st.session_state.survey["questions"]):
+                condition = f" ({tr.get('condition', 'Condition')}: {q['condition']})" if q.get("condition") else ""
+                st.write(f"{i+1}. {q['text']} ({q['type']}{condition})")
+                if q.get("options"):
                     options = q.get("options")
-                    if "choice" in q_type and (options is None or not isinstance(options, (list, tuple)) or not options):
-                        issues.append(f"{q_num}: {tr.get('missing_options', 'Choice question requires options')} - {q}")
-                        continue
-                    if "open" in q_type and options is not None:
-                        issues.append(f"{q_num}: {tr.get('unexpected_options', 'Open-ended question should not have options')} - {q}")
-                        continue
+                    if options and isinstance(options[0], dict):
+                        option_texts = [opt.get("value", str(opt)) for opt in options]
+                    else:
+                        option_texts = options or []
+                    st.write(f"{tr.get('options', 'Options')}: " + ", ".join(str(opt) for opt in option_texts))
+            st.write(f"{tr.get('conclusion', 'Conclusion')}: {st.session_state.survey['outro']}")
 
-                    # Vérification des conditions
-                    condition = q.get("condition")
-                    if condition:
-                        try:
-                            if isinstance(condition, str):
-                                # Condition sous forme de chaîne : "If Q5 = Yes"
-                                cond_parts = condition.split(" = ")
-                                if len(cond_parts) != 2:
-                                    issues.append(f"{q_num}: {tr.get('invalid_condition_format', 'Invalid condition format')} ({condition})")
-                                    continue
-                                cond_q, cond_val = cond_parts
-                            elif isinstance(condition, dict):
-                                # Condition sous forme de dictionnaire : {"question": "Q5", "value": "Yes"}
-                                cond_q = condition.get("question", "")
-                                cond_val = condition.get("value", "")
-                                if not cond_q or not cond_val:
-                                    issues.append(f"{q_num}: {tr.get('invalid_condition_dict', 'Invalid condition dictionary')} ({condition})")
-                                    continue
-                            else:
-                                issues.append(f"{q_num}: {tr.get('unsupported_condition_type', 'Unsupported condition type')} ({condition})")
-                                continue
+            # Exportation corrigée
+            export_format = st.selectbox(tr.get("export_label", "Export Format"), ["JSON", "Excel", "CSV"])
+            df = pd.DataFrame()  # Initialisation par défaut
+            if export_format == "JSON":
+                st.json(st.session_state.survey)
+            else:
+                df = pd.DataFrame(st.session_state.survey["questions"])
+                st.dataframe(df)
 
-                            # Extraire l'index de la question référencée
-                            cond_q_clean = cond_q.replace("If Q", "").strip()
-                            try:
-                                cond_idx = int(cond_q_clean) - 1  # Convertir en index 0-based
-                            except ValueError:
-                                issues.append(f"{q_num}: {tr.get('invalid_question_ref', 'Invalid question reference')} ({cond_q})")
-                                continue
-
-                            # Vérifier si l'index est valide
-                            if cond_idx < 0 or cond_idx >= len(survey["questions"]):
-                                issues.append(f"{q_num}: {tr.get('out_of_bounds', 'Condition references out-of-bounds question')} ({cond_q})")
-                                continue
-
-                            # Vérifier les options de la question référencée
-                            ref_q = survey["questions"][cond_idx]
-                            ref_options = ref_q.get("options", [])
-                            if ref_options is None:
-                                ref_options = []
-
-                            # Normaliser les options pour la comparaison
-                            ref_option_values = []
-                            for opt in ref_options:
-                                if isinstance(opt, (int, str)):
-                                    ref_option_values.append(str(opt).strip().lower())
-                                elif isinstance(opt, dict):
-                                    ref_option_values.append(str(opt.get("value", opt)).strip().lower())
-                                else:
-                                    issues.append(f"Q{cond_idx+1}: {tr.get('invalid_option_format', 'Invalid option format')} ({opt})")
-
-                            # Nettoyer la valeur de la condition
-                            cond_val_cleaned = str(cond_val).strip("'\"").lower()
-
-                            # Vérifier si la valeur est dans les options
-                            if not ref_option_values:
-                                issues.append(f"{q_num}: {tr.get('no_options_ref', 'Referenced question has no options')} (Q{cond_idx+1})")
-                            elif cond_val_cleaned not in ref_option_values:
-                                issues.append(f"{q_num}: {tr.get('invalid_condition_value', 'Invalid condition value')} ({condition}) - '{cond_val}' not in Q{cond_idx+1} options: {ref_option_values}")
-                        except Exception as e:
-                            issues.append(f"{q_num}: {tr.get('condition_error', 'Error processing condition')} ({condition}) - {str(e)}")
-
-                return issues
-
-
-            if st.session_state.survey.get("questions"):
-                        issues = check_consistency(st.session_state.survey)
-                        if issues:
-                            st.warning(f"{tr.get('issues_detected', 'Issues detected')}:\n" + "\n".join(issues))
-
-                        st.subheader(tr.get("generated_survey", "Generated Survey"))
-                        st.write(f"{tr.get('introduction', 'Introduction')}: {st.session_state.survey['intro']}")
-                        for i, q in enumerate(st.session_state.survey["questions"]):
-                            condition = f" ({tr.get('condition', 'Condition')}: {q['condition']})" if q.get("condition") else ""
-                            st.write(f"{i+1}. {q['text']} ({q['type']}{condition})")
-                            if q.get("options"):
-                                options = q.get("options")
-                                if options and isinstance(options[0], dict):
-                                    option_texts = [opt.get("value", str(opt)) for opt in options]
-                                else:
-                                    option_texts = options or []
-                                st.write(f"{tr.get('options', 'Options')}: " + ", ".join(str(opt) for opt in option_texts))
-                            # Débogage des conditions
-                            if q.get("condition"):
-                                try:
-                                    if isinstance(q["condition"], str):
-                                        cond_parts = q["condition"].split(" = ")
-                                        if len(cond_parts) == 2:
-                                            cond_q = cond_parts[0].replace("If Q", "").strip()
-                                            cond_idx = int(cond_q) - 1
-                                            if 0 <= cond_idx < len(st.session_state.survey["questions"]):
-                                                ref_q = st.session_state.survey["questions"][cond_idx]
-                                                st.write(f"-> Référence à Q{cond_idx+1} options: {ref_q.get('options', 'Aucune')}")
-                                except (ValueError, IndexError):
-                                    st.write(f"-> Erreur dans la condition : {q['condition']}")
-                        st.write(f"{tr.get('conclusion', 'Conclusion')}: {st.session_state.survey['outro']}")
-
-                        # Exportation améliorée
-                        export_format = st.selectbox(tr.get("export_label", "Export Format"), ["JSON", "Excel", "CSV"])
-                        if export_format == "JSON":
-                            st.json(st.session_state.survey)
-                        else:
+            if st.button(tr.get("export_button", "Export")):
+                try:
+                    if export_format == "JSON":
+                        json_str = json.dumps(st.session_state.survey, ensure_ascii=False, indent=2)
+                        json_bytes = json_str.encode('utf-8')
+                        st.download_button(
+                            label=tr.get("download", "Download"),
+                            data=json_bytes,
+                            file_name="survey.json",
+                            mime="application/json",
+                            key="download_json"
+                        )
+                    elif export_format == "Excel":
+                        if df.empty:
                             df = pd.DataFrame(st.session_state.survey["questions"])
-                            st.dataframe(df)
-
-                        if st.button(tr.get("export_button", "Export")):
-                            try:
-                                if export_format == "JSON":
-                                    json_str = json.dumps(st.session_state.survey, ensure_ascii=False, indent=2)
-                                    json_bytes = json_str.encode('utf-8')
-                                    st.download_button(
-                                        label=tr.get("download", "Download"),
-                                        data=json_bytes,
-                                        file_name="survey.json",
-                                        mime="application/json"
-                                    )
-                                elif export_format == "Excel":
-                                    output = io.BytesIO()
-                                    df = pd.DataFrame(st.session_state.survey["questions"])
-                                    df.to_excel(output, index=False, engine='openpyxl')
-                                    output.seek(0)
-                                    st.download_button(
-                                        label=tr.get("download", "Download"),
-                                        data=output,
-                                        file_name="survey.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                    )
-                                elif export_format == "CSV":
-                                    output = io.StringIO()
-                                    df = pd.DataFrame(st.session_state.survey["questions"])
-                                    df.to_csv(output, index=False)
-                                    csv_bytes = output.getvalue().encode('utf-8')
-                                    output.close()
-                                    st.download_button(
-                                        label=tr.get("download", "Download"),
-                                        data=csv_bytes,
-                                        file_name="survey.csv",
-                                        mime="text/csv"
-                                    )
-                                st.success(tr.get("export_success", "File ready for download!"))
-                            except Exception as e:
-                                st.error(f"{tr.get('export_error', 'Export failed')}: {str(e)}")
+                        output = io.BytesIO()
+                        df.to_excel(output, index=False, engine='openpyxl')
+                        output.seek(0)
+                        st.download_button(
+                            label=tr.get("download", "Download"),
+                            data=output,
+                            file_name="survey.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel"
+                        )
+                    elif export_format == "CSV":
+                        if df.empty:
+                            df = pd.DataFrame(st.session_state.survey["questions"])
+                        output = io.StringIO()
+                        df.to_csv(output, index=False)
+                        csv_bytes = output.getvalue().encode('utf-8')
+                        output.close()
+                        st.download_button(
+                            label=tr.get("download", "Download"),
+                            data=csv_bytes,
+                            file_name="survey.csv",
+                            mime="text/csv",
+                            key="download_csv"
+                        )
+                    st.success(tr.get("export_success", "File ready for download!"))
+                except ImportError as e:
+                    st.error(f"{tr.get('export_error', 'Export failed')}: Missing dependency (e.g., 'openpyxl' for Excel). Install it with 'pip install openpyxl'. Error: {str(e)}")
+                except Exception as e:
+                    st.error(f"{tr.get('export_error', 'Export failed')}: {str(e)}")
