@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tutoriel Multilingue - Générateur d'Enquêtes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        .language-selector {
+            margin-bottom: 20px;
+        }
+        .content {
+            display: none;
+        }
+        .content.active {
+            display: block;
+        }
+        pre {
+            background: #eee;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        code {
+            color: #d63384;
+        }
+    </style>
+    <script>
+        function showContent(lang) {
+            document.querySelectorAll('.content').forEach(el => el.classList.remove('active'));
+            document.getElementById(lang).classList.add('active');
+        }
+    </script>
+</head>
+<body>
+    <h1>Tutoriel Multilingue - Générateur d'Enquêtes</h1>
+    <div class="language-selector">
+        <button onclick="showContent('fr')">Français</button>
+        <button onclick="showContent('en')">English</button>
+        <button onclick="showContent('es')">Español</button>
+        <button onclick="showContent('ar')">العربية</button>
+    </div>
+    
+    <div id="fr" class="content active">
+        <h2>Sommaire</h2>
+        <ul>
+            <li><a href="#installation-fr">Installation</a></li>
+            <li><a href="#configuration-fr">Configuration</a></li>
+            <li><a href="#utilisation-fr">Utilisation</a></li>
+            <li><a href="#exemples-fr">Exemples</a></li>
+            <li><a href="#exportation-fr">Exportation</a></li>
+            <li><a href="#depannage-fr">Dépannage</a></li>
+        </ul>
+        <h2 id="installation-fr">Installation</h2>
+        <p>1. Installez Python 3.8+ et exécutez :</p>
+        <pre><code>pip install -r requirements.txt</code></pre>
+        <h2 id="configuration-fr">Configuration</h2>
+        <p>Vous pouvez configurer votre application en sélectionnant le service IA et la langue :</p>
+        <ul>
+            <li>Langues disponibles : Français, Anglais, Espagnol, Arabe</li>
+            <li>Services IA : Ollama (local), OpenAI (ChatGPT), Claude (Anthropic)</li>
+        </ul>
+        <h2 id="utilisation-fr">Utilisation</h2>
+        <p>Pour lancer l'application :</p>
+        <pre><code>streamlit run app.py</code></pre>
+        <h2 id="exemples-fr">Exemples</h2>
+        <p>Voici un exemple de configuration d'un questionnaire :</p>
+        <pre><code>{
+    "title": "Satisfaction client 2024",
+    "questions": [
+        {"text": "Êtes-vous satisfait de notre service ?", "type": "choix unique", "options": ["Oui", "Non"]},
+        {"text": "Quels aspects devons-nous améliorer ?", "type": "ouvert"}
+    ]
+}</code></pre>
+        <h2 id="exportation-fr">Exportation</h2>
+        <p>Vous pouvez exporter en JSON, CSV ou Excel :</p>
+        <pre><code>survey.json, survey.csv, survey.xlsx</code></pre>
+        <h2 id="depannage-fr">Dépannage</h2>
+        <ul>
+            <li>Erreur d'API : Vérifiez votre clé API</li>
+            <li>Application ne démarre pas : Installez les dépendances avec <code>pip install -r requirements.txt</code></li>
+        </ul>
+    </div>
+    
+    <div id="en" class="content">
+        <h2>Table of Contents</h2>
+        <ul>
+            <li><a href="#installation-en">Installation</a></li>
+            <li><a href="#configuration-en">Configuration</a></li>
+            <li><a href="#usage-en">Usage</a></li>
+            <li><a href="#examples-en">Examples</a></li>
+            <li><a href="#export-en">Export</a></li>
+            <li><a href="#troubleshooting-en">Troubleshooting</a></li>
+        </ul>
+        <h2 id="installation-en">Installation</h2>
+        <p>1. Install Python 3.8+ and run:</p>
+        <pre><code>pip install -r requirements.txt</code></pre>
+        <h2 id="configuration-en">Configuration</h2>
+        <p>Select AI service and language:</p>
+        <ul>
+            <li>Languages: French, English, Spanish, Arabic</li>
+            <li>AI Services: Ollama (Local), OpenAI (ChatGPT), Claude (Anthropic)</li>
+        </ul>
+        <h2 id="usage-en">Usage</h2>
+        <p>Start the application:</p>
+        <pre><code>streamlit run app.py</code></pre>
+        <h2 id="examples-en">Examples</h2>
+        <pre><code>{
+    "title": "Customer Satisfaction Survey 2024",
+    "questions": [
+        {"text": "Are you satisfied with our service?", "type": "single choice", "options": ["Yes", "No"]},
+        {"text": "What aspects should we improve?", "type": "open-ended"}
+    ]
+}</code></pre>
+        <h2 id="export-en">Export</h2>
+        <p>You can export in JSON, CSV, or Excel:</p>
+        <pre><code>survey.json, survey.csv, survey.xlsx</code></pre>
+        <h2 id="troubleshooting-en">Troubleshooting</h2>
+        <ul>
+            <li>API error: Check API key</li>
+            <li>App won't start: Run <code>pip install -r requirements.txt</code></li>
+        </ul>
+    </div>
+    
+    <!-- Sections for Spanish (es) and Arabic (ar) follow the same structure -->
+    
+</body>
+</html>
