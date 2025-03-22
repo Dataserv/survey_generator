@@ -5,6 +5,7 @@ from ollama_integration import generate_question_list, generate_full_survey_with
 import os
 import time
 import threading
+import io
 import re
 from openai import OpenAI  # Pour l'API OpenAI
 import anthropic  # Pour l'API Claude
@@ -395,118 +396,166 @@ with tabs[3]:
             def check_consistency(survey):
                 issues = []
                 if not survey.get("questions") or not isinstance(survey["questions"], (list, tuple)):
-                    return issues  # Retourner une liste vide si pas de questions valides
-                
+                    issues.append(tr.get("no_questions", "No valid questions found in survey"))
+                    return issues
+
                 for i, q in enumerate(survey["questions"]):
-                    if q.get("condition"):
+                    q_num = f"Q{i+1}"
+                    
+                    # Vérification des champs obligatoires
+                    if not q.get("text") or not q.get("type"):
+                        issues.append(f"{q_num}: {tr.get('missing_field', 'Missing required field (text or type)')} - {q}")
+                        continue
+
+                    # Vérification des options selon le type
+                    q_type = q.get("type", "").lower()
+                    options = q.get("options")
+                    if "choice" in q_type and (options is None or not isinstance(options, (list, tuple)) or not options):
+                        issues.append(f"{q_num}: {tr.get('missing_options', 'Choice question requires options')} - {q}")
+                        continue
+                    if "open" in q_type and options is not None:
+                        issues.append(f"{q_num}: {tr.get('unexpected_options', 'Open-ended question should not have options')} - {q}")
+                        continue
+
+                    # Vérification des conditions
+                    condition = q.get("condition")
+                    if condition:
                         try:
-                            # Extraire le numéro de question (ex. "Q1") et la valeur (ex. "'Yes'")
-                            cond_parts = q["condition"].split(" = ")
-                            if len(cond_parts) != 2:
-                                issues.append(f"Q{i+1}: {tr.get('invalid_condition_format', 'Invalid condition format')} ({q['condition']})")
+                            if isinstance(condition, str):
+                                # Condition sous forme de chaîne : "If Q5 = Yes"
+                                cond_parts = condition.split(" = ")
+                                if len(cond_parts) != 2:
+                                    issues.append(f"{q_num}: {tr.get('invalid_condition_format', 'Invalid condition format')} ({condition})")
+                                    continue
+                                cond_q, cond_val = cond_parts
+                            elif isinstance(condition, dict):
+                                # Condition sous forme de dictionnaire : {"question": "Q5", "value": "Yes"}
+                                cond_q = condition.get("question", "")
+                                cond_val = condition.get("value", "")
+                                if not cond_q or not cond_val:
+                                    issues.append(f"{q_num}: {tr.get('invalid_condition_dict', 'Invalid condition dictionary')} ({condition})")
+                                    continue
+                            else:
+                                issues.append(f"{q_num}: {tr.get('unsupported_condition_type', 'Unsupported condition type')} ({condition})")
                                 continue
-                            cond_q, cond_val = cond_parts
-                            cond_idx = int(cond_q.replace("If Q", "")) - 1  # Convertir Q1 (1-based) en index 0-based
-                            
+
+                            # Extraire l'index de la question référencée
+                            cond_q_clean = cond_q.replace("If Q", "").strip()
+                            try:
+                                cond_idx = int(cond_q_clean) - 1  # Convertir en index 0-based
+                            except ValueError:
+                                issues.append(f"{q_num}: {tr.get('invalid_question_ref', 'Invalid question reference')} ({cond_q})")
+                                continue
+
                             # Vérifier si l'index est valide
                             if cond_idx < 0 or cond_idx >= len(survey["questions"]):
-                                issues.append(f"Q{i+1}: {tr.get('invalid_condition', 'Invalid condition')} ({q['condition']}) - Index hors limites")
+                                issues.append(f"{q_num}: {tr.get('out_of_bounds', 'Condition references out-of-bounds question')} ({cond_q})")
                                 continue
-                            
-                            # Récupérer les options de la question référencée
-                            options = survey["questions"][cond_idx].get("options", [])
-                            if options is None:
-                                options = []  # Remplacer None par une liste vide
-                            
-                            # Normaliser les options pour gérer les différences de format
-                            option_values = [str(opt) if isinstance(opt, (int, str)) else opt.get("value", str(opt)) for opt in options]
-                            
-                            # Vérifier si la valeur de la condition est dans les options
-                            cond_val_cleaned = cond_val.strip("'\"")  # Enlever les guillemets simples ou doubles
-                            if cond_val_cleaned not in option_values:
-                                issues.append(f"Q{i+1}: {tr.get('invalid_condition', 'Invalid condition')} ({q['condition']}) - Valeur '{cond_val_cleaned}' non trouvée dans les options de Q{cond_idx + 1}")
-                        except ValueError:
-                            issues.append(f"Q{i+1}: {tr.get('invalid_condition_format', 'Invalid condition format')} ({q['condition']})")
+
+                            # Vérifier les options de la question référencée
+                            ref_q = survey["questions"][cond_idx]
+                            ref_options = ref_q.get("options", [])
+                            if ref_options is None:
+                                ref_options = []
+
+                            # Normaliser les options pour la comparaison
+                            ref_option_values = []
+                            for opt in ref_options:
+                                if isinstance(opt, (int, str)):
+                                    ref_option_values.append(str(opt).strip().lower())
+                                elif isinstance(opt, dict):
+                                    ref_option_values.append(str(opt.get("value", opt)).strip().lower())
+                                else:
+                                    issues.append(f"Q{cond_idx+1}: {tr.get('invalid_option_format', 'Invalid option format')} ({opt})")
+
+                            # Nettoyer la valeur de la condition
+                            cond_val_cleaned = str(cond_val).strip("'\"").lower()
+
+                            # Vérifier si la valeur est dans les options
+                            if not ref_option_values:
+                                issues.append(f"{q_num}: {tr.get('no_options_ref', 'Referenced question has no options')} (Q{cond_idx+1})")
+                            elif cond_val_cleaned not in ref_option_values:
+                                issues.append(f"{q_num}: {tr.get('invalid_condition_value', 'Invalid condition value')} ({condition}) - '{cond_val}' not in Q{cond_idx+1} options: {ref_option_values}")
+                        except Exception as e:
+                            issues.append(f"{q_num}: {tr.get('condition_error', 'Error processing condition')} ({condition}) - {str(e)}")
+
                 return issues
 
-            # Contexte d'utilisation
-            if st.session_state.survey.get("questions"):
-                issues = check_consistency(st.session_state.survey)
-                if issues:
-                    st.warning(f"{tr.get('issues_detected', 'Issues detected')}:\n" + "\n".join(issues))
-
-            st.subheader(tr.get("generated_survey", "Generated Survey"))
-            st.write(f"{tr.get('introduction', 'Introduction')}: {st.session_state.survey['intro']}")
-            for i, q in enumerate(st.session_state.survey["questions"]):
-                condition = f" ({tr.get('condition', 'Condition')}: {q['condition']})" if q.get("condition") else ""
-                st.write(f"{i+1}. {q['text']} ({q['type']}{condition})")
-                if q.get("options"):
-                    options = q.get("options")
-                    if options and isinstance(options[0], dict):
-                        option_texts = [opt.get("value", str(opt)) for opt in options]
-                    else:
-                        option_texts = options or []
-                    st.write(f"{tr.get('options', 'Options')}: " + ", ".join(str(opt) for opt in option_texts))
-            st.write(f"{tr.get('conclusion', 'Conclusion')}: {st.session_state.survey['outro']}")
-            # Utilisation dans le contexte
-            with st.spinner(tr.get("generating", "Generating in progress...")):
-                result = [None]
-                def run_generation(prompt=prompt):
-                    try:
-                        result[0] = generate_full_survey_with_options(prompt)
-                    except Exception as e:
-                        result[0] = f"Error generating: {str(e)}"
-                thread = threading.Thread(target=run_generation)
-                thread.start()
-                thread.join()
-                if result[0] is None:
-                    st.error(tr.get("error_message", "Error: No response received from the model."))
-                elif isinstance(result[0], str) and "Error" in result[0]:
-                    st.error(result[0])
-                else:
-                    try:
-                        survey_data = json.loads(result[0])
-                        st.session_state.survey = survey_data
-                        st.success(tr.get("success_message", "Survey generated successfully!"))
-                    except json.JSONDecodeError as e:
-                        st.error(f"{tr.get('json_error', 'JSON parsing error')}: {str(e)}. Response: {result[0]}")
-                    except Exception as e:
-                        st.error(f"{tr.get('unexpected_error', 'Unexpected error')}: {str(e)}. Response: {result[0]}")
 
             if st.session_state.survey.get("questions"):
-                issues = check_consistency(st.session_state.survey)
-                if issues:
-                    st.warning(f"{tr.get('issues_detected', 'Issues detected')}:\n" + "\n".join(issues))
+                        issues = check_consistency(st.session_state.survey)
+                        if issues:
+                            st.warning(f"{tr.get('issues_detected', 'Issues detected')}:\n" + "\n".join(issues))
 
-            st.subheader(tr.get("generated_survey", "Generated Survey"))
-            st.write(f"{tr.get('introduction', 'Introduction')}: {st.session_state.survey['intro']}")
-            for i, q in enumerate(st.session_state.survey["questions"]):
-                condition = f" ({tr.get('condition', 'Condition')}: {q['condition']})" if q.get("condition") else ""
-                st.write(f"{i+1}. {q['text']} ({q['type']}{condition})")
-                if q.get("options"):
-                    options = q.get("options")
-                    if options and isinstance(options[0], dict):
-                        option_texts = [opt.get("value", str(opt)) for opt in options]
-                    else:
-                        option_texts = options or []
-                    st.write(f"{tr.get('options', 'Options')}: " + ", ".join(str(opt) for opt in option_texts))
-            st.write(f"{tr.get('conclusion', 'Conclusion')}: {st.session_state.survey['outro']}")
+                        st.subheader(tr.get("generated_survey", "Generated Survey"))
+                        st.write(f"{tr.get('introduction', 'Introduction')}: {st.session_state.survey['intro']}")
+                        for i, q in enumerate(st.session_state.survey["questions"]):
+                            condition = f" ({tr.get('condition', 'Condition')}: {q['condition']})" if q.get("condition") else ""
+                            st.write(f"{i+1}. {q['text']} ({q['type']}{condition})")
+                            if q.get("options"):
+                                options = q.get("options")
+                                if options and isinstance(options[0], dict):
+                                    option_texts = [opt.get("value", str(opt)) for opt in options]
+                                else:
+                                    option_texts = options or []
+                                st.write(f"{tr.get('options', 'Options')}: " + ", ".join(str(opt) for opt in option_texts))
+                            # Débogage des conditions
+                            if q.get("condition"):
+                                try:
+                                    if isinstance(q["condition"], str):
+                                        cond_parts = q["condition"].split(" = ")
+                                        if len(cond_parts) == 2:
+                                            cond_q = cond_parts[0].replace("If Q", "").strip()
+                                            cond_idx = int(cond_q) - 1
+                                            if 0 <= cond_idx < len(st.session_state.survey["questions"]):
+                                                ref_q = st.session_state.survey["questions"][cond_idx]
+                                                st.write(f"-> Référence à Q{cond_idx+1} options: {ref_q.get('options', 'Aucune')}")
+                                except (ValueError, IndexError):
+                                    st.write(f"-> Erreur dans la condition : {q['condition']}")
+                        st.write(f"{tr.get('conclusion', 'Conclusion')}: {st.session_state.survey['outro']}")
 
-            export_format = st.selectbox(tr.get("export_label", "Export Format"), ["JSON", "Excel", "CSV"])
-            if export_format == "JSON":
-                st.json(st.session_state.survey)
-            else:
-                df = pd.DataFrame(st.session_state.survey["questions"])
-                st.dataframe(df)
+                        # Exportation améliorée
+                        export_format = st.selectbox(tr.get("export_label", "Export Format"), ["JSON", "Excel", "CSV"])
+                        if export_format == "JSON":
+                            st.json(st.session_state.survey)
+                        else:
+                            df = pd.DataFrame(st.session_state.survey["questions"])
+                            st.dataframe(df)
 
-            if st.button(tr.get("export_button", "Export")):
-                if export_format == "JSON":
-                    with open("survey.json", "w", encoding="utf-8") as f:
-                        json.dump(st.session_state.survey, f, ensure_ascii=False)
-                    st.download_button(tr.get("download", "Download"), open("survey.json", "rb"), "survey.json")
-                elif export_format == "Excel":
-                    df.to_excel("survey.xlsx", index=False)
-                    st.download_button(tr.get("download", "Download"), open("survey.xlsx", "rb"), "survey.xlsx")
-                elif export_format == "CSV":
-                    df.to_csv("survey.csv", index=False)
-                    st.download_button(tr.get("download", "Download"), open("survey.csv", "rb"), "survey.csv")
+                        if st.button(tr.get("export_button", "Export")):
+                            try:
+                                if export_format == "JSON":
+                                    json_str = json.dumps(st.session_state.survey, ensure_ascii=False, indent=2)
+                                    json_bytes = json_str.encode('utf-8')
+                                    st.download_button(
+                                        label=tr.get("download", "Download"),
+                                        data=json_bytes,
+                                        file_name="survey.json",
+                                        mime="application/json"
+                                    )
+                                elif export_format == "Excel":
+                                    output = io.BytesIO()
+                                    df = pd.DataFrame(st.session_state.survey["questions"])
+                                    df.to_excel(output, index=False, engine='openpyxl')
+                                    output.seek(0)
+                                    st.download_button(
+                                        label=tr.get("download", "Download"),
+                                        data=output,
+                                        file_name="survey.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    )
+                                elif export_format == "CSV":
+                                    output = io.StringIO()
+                                    df = pd.DataFrame(st.session_state.survey["questions"])
+                                    df.to_csv(output, index=False)
+                                    csv_bytes = output.getvalue().encode('utf-8')
+                                    output.close()
+                                    st.download_button(
+                                        label=tr.get("download", "Download"),
+                                        data=csv_bytes,
+                                        file_name="survey.csv",
+                                        mime="text/csv"
+                                    )
+                                st.success(tr.get("export_success", "File ready for download!"))
+                            except Exception as e:
+                                st.error(f"{tr.get('export_error', 'Export failed')}: {str(e)}")
