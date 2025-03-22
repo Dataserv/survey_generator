@@ -20,6 +20,15 @@ Ensure your system meets the following requirements:
   ```sh
   pip install --upgrade pip
   ```
+### 📦 Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/survey_generator.git
+   cd survey_generator
+  
+python -m venv questionnaire_generator
+source questionnaire_generator/bin/activate  # On macOS/Linux
+questionnaire_generator\Scripts\activate     # On Windows
+```
 
 ### 📦 Install Dependencies
 Run the following command to install all necessary packages:
