@@ -24,7 +24,7 @@ Ensure your system meets the following requirements:
   ```
 ### 📦 Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/survey_generator.git
+   git clone https://github.com/Dataserv/survey_generator.git
    cd survey_generator
   
 python -m venv questionnaire_generator
